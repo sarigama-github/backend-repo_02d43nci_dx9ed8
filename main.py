@@ -1,6 +1,8 @@
 import os
+from typing import List, Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
@@ -12,13 +14,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+def serialize_job(doc: dict) -> dict:
+    if not isinstance(doc, dict):
+        return doc
+    d = doc.copy()
+    _id = d.pop("_id", None)
+    if _id is not None:
+        d["id"] = str(_id)
+    return d
+
+
 @app.get("/")
 def read_root():
     return {"message": "Hello from FastAPI Backend!"}
 
+
 @app.get("/api/hello")
 def hello():
     return {"message": "Hello from the backend API!"}
+
+
+@app.get("/jobs")
+def list_jobs(q: Optional[str] = None, location: Optional[str] = None):
+    """Return a list of jobs. If database is configured, read from 'job' collection,
+    otherwise return an empty list (so the frontend can load gracefully)."""
+    items: List[dict] = []
+    try:
+        from database import db
+        if db is not None:
+            query = {}
+            filters = []
+            if q:
+                # Simple regex match on title/company/description
+                filters.append({"title": {"$regex": q, "$options": "i"}})
+                filters.append({"company": {"$regex": q, "$options": "i"}})
+                filters.append({"description": {"$regex": q, "$options": "i"}})
+            if location:
+                filters.append({"location": {"$regex": location, "$options": "i"}})
+            if filters:
+                query = {"$or": filters}
+            docs = list(db["job"].find(query).limit(100))
+            items = [serialize_job(d) for d in docs]
+        else:
+            items = []
+    except Exception:
+        # If any error (e.g., no DATABASE_URL), return empty list so UI still loads
+        items = []
+    return {"items": items}
+
 
 @app.get("/test")
 def test_database():
